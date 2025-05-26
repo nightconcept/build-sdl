@@ -173,10 +173,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Package macOS library
-        working-directory: SDL_image/build/Release
+        working-directory: SDL_image/build
         run: |
           # Assuming libSDL3_image.0.dylib is the correct file
-          zip "../../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip" libSDL3_image.0.dylib
+          zip "../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip" libSDL3_image.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
