@@ -167,10 +167,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Package macOS library
-        working-directory: SDL_ttf/build/Release
+        working-directory: SDL_ttf/build
         run: |
           # Assuming libSDL3_ttf.0.dylib is the correct file
-          zip "../../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip" libSDL3_ttf.0.dylib
+          zip "../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip" libSDL3_ttf.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
