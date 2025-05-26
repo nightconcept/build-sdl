@@ -1,0 +1,228 @@
+name: Build and Release SDL_mixer
+
+on:
+  workflow_dispatch: # Manual trigger
+  schedule:
+    - cron: '0 2 * * *' # Run daily at 2 AM UTC
+
+jobs:
+  build_sdl_mixer:
+    name: Build SDL_mixer on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    outputs:
+      sdl_mixer_version: ${{ steps.version_discovery.outputs.sdl_mixer_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SDL3 and SDL_mixer
+        id: sdl
+        uses: libsdl-org/setup-sdl@main
+        with:
+          version: '3-latest' # SDL3 core dependency
+          version-sdl-mixer: '3-latest' # SDL_mixer itself
+          pre-release: 'true'
+          build-type: 'Release'
+          install-linux-dependencies: 'true'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Discover SDL_mixer version
+        id: version_discovery
+        shell: bash
+        run: |
+          SDL_MIXER_HEADER="${{ steps.sdl.outputs.prefix }}/include/SDL3/SDL_mixer.h"
+          if [ ! -f "$SDL_MIXER_HEADER" ]; then
+            echo "Error: SDL_mixer.h not found at $SDL_MIXER_HEADER"
+            exit 1
+          fi
+          MAJOR=$(grep '#define SDL_MIXER_MAJOR_VERSION' "$SDL_MIXER_HEADER" | awk '{print $3}')
+          MINOR=$(grep '#define SDL_MIXER_MINOR_VERSION' "$SDL_MIXER_HEADER" | awk '{print $3}')
+          PATCH=$(grep '#define SDL_MIXER_PATCHLEVEL' "$SDL_MIXER_HEADER" | awk '{print $3}')
+          if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
+            echo "Error: Could not parse SDL_mixer version from $SDL_MIXER_HEADER"
+            exit 1
+          fi
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "Discovered SDL_mixer version: $VERSION"
+          echo "$VERSION" > sdl_mixer_version.txt
+          echo "sdl_mixer_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Created sdl_mixer_version.txt with content: $(cat sdl_mixer_version.txt)"
+
+      - name: Upload SDL_mixer version artifact (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdl-mixer-version-info
+          path: sdl_mixer_version.txt
+
+      - name: Set OS specific names and paths
+        id: names
+        shell: bash
+        run: |
+          OS_SLUG=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          echo "os_slug=${OS_SLUG}" >> $GITHUB_OUTPUT
+          SDL_MIXER_VERSION_STR="${{ steps.version_discovery.outputs.sdl_mixer_version }}"
+          ARCHIVE_NAME="sdl3-mixer-${OS_SLUG}-v${SDL_MIXER_VERSION_STR}.zip"
+          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+          echo "Artifact will be named: ${ARCHIVE_NAME}"
+          echo "SDL_INSTALL_PREFIX=${{ steps.sdl.outputs.prefix }}" >> $GITHUB_OUTPUT
+
+      - name: Package SDL_mixer files
+        shell: bash
+        env:
+          SDL_INSTALL_PREFIX: ${{ steps.sdl.outputs.prefix }}
+          OS_SLUG: ${{ steps.names.outputs.os_slug }}
+          ARCHIVE_NAME: ${{ steps.names.outputs.archive_name }}
+          DIST_DIR_NAME: "sdl3_mixer_dist"
+        run: |
+          echo "Packaging SDL_mixer files from $SDL_INSTALL_PREFIX for $OS_SLUG"
+          mkdir -p "$DIST_DIR_NAME/include/SDL3"
+          mkdir -p "$DIST_DIR_NAME/lib/cmake/SDL3_mixer"
+          mkdir -p "$DIST_DIR_NAME/lib/pkgconfig"
+          mkdir -p "$DIST_DIR_NAME/bin" # For Windows DLL
+          mkdir -p "$DIST_DIR_NAME/share/licenses/SDL_mixer"
+
+          # Header
+          cp "$SDL_INSTALL_PREFIX/include/SDL3/SDL_mixer.h" "$DIST_DIR_NAME/include/SDL3/"
+
+          # CMake files
+          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_mixer/SDL3_mixerConfig.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_mixer/"
+          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_mixer/SDL3_mixerConfigVersion.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_mixer/"
+          find "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_mixer/" -name "SDL3_mixerTargets*.cmake" -exec cp {} "$DIST_DIR_NAME/lib/cmake/SDL3_mixer/" \;
+
+          # Pkg-config
+          cp "$SDL_INSTALL_PREFIX/lib/pkgconfig/sdl3-mixer.pc" "$DIST_DIR_NAME/lib/pkgconfig/"
+          
+          # License
+          LICENSE_FILE_PATH=""
+          # Common pattern for SDL satellite licenses by setup-sdl seems to be in a subfolder
+          if [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_mixer/LICENSE.txt" ]; then
+            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_mixer/LICENSE.txt"
+          elif [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_mixer/COPYING" ]; then
+            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_mixer/COPYING"
+          elif [ -f "$SDL_INSTALL_PREFIX/LICENSE.SDL_mixer.txt" ]; then # Fallback
+            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/LICENSE.SDL_mixer.txt"
+          fi
+          if [ -n "$LICENSE_FILE_PATH" ]; then
+            cp "$LICENSE_FILE_PATH" "$DIST_DIR_NAME/share/licenses/SDL_mixer/"
+            echo "Copied license: $LICENSE_FILE_PATH"
+          else
+            echo "Warning: SDL_mixer license file not found at expected locations."
+          fi
+
+          # Libraries
+          if [ "$OS_SLUG" == "linux" ]; then
+            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_mixer.so"* "$DIST_DIR_NAME/lib/"
+          elif [ "$OS_SLUG" == "macos" ]; then
+            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_mixer.dylib"* "$DIST_DIR_NAME/lib/"
+          elif [ "$OS_SLUG" == "windows" ]; then
+            cp "$SDL_INSTALL_PREFIX/bin/SDL3_mixer.dll" "$DIST_DIR_NAME/bin/"
+            cp "$SDL_INSTALL_PREFIX/lib/SDL3_mixer.lib" "$DIST_DIR_NAME/lib/"
+            # SDL_mixer often has external dependencies (ogg, vorbis, flac, etc.)
+            # setup-sdl should bundle these if statically linked or place them in bin/ if dynamically.
+            # This script assumes setup-sdl handles bundling them with SDL3_mixer.dll or they are system-provided.
+            # For a more robust solution, one might need to list and copy known SDL_mixer dependencies.
+          fi
+          
+          echo "Contents of $DIST_DIR_NAME:"
+          ls -R "$DIST_DIR_NAME"
+          
+          cd "$DIST_DIR_NAME"
+          zip -r "${{ github.workspace }}/$ARCHIVE_NAME" .
+          echo "Created ${{ github.workspace }}/$ARCHIVE_NAME"
+
+      - name: Upload SDL_mixer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.names.outputs.archive_name }}
+          path: ${{ github.workspace }}/${{ steps.names.outputs.archive_name }}
+
+  release_sdl_mixer:
+    name: Create SDL_mixer GitHub Release
+    needs: build_sdl_mixer
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download SDL_mixer version artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdl-mixer-version-info
+          path: .
+
+      - name: Read SDL_mixer Version and Set Release Info
+        id: release_info
+        shell: bash
+        run: |
+          if [ ! -f sdl_mixer_version.txt ]; then
+            echo "Error: sdl_mixer_version.txt not found!"
+            exit 1
+          fi
+          SDL_MIXER_VERSION=$(cat sdl_mixer_version.txt)
+          if [ -z "$SDL_MIXER_VERSION" ]; then
+            echo "Error: SDL_MIXER_VERSION is empty in sdl_mixer_version.txt!"
+            exit 1
+          fi
+          echo "Read SDL_MIXER_VERSION: ${SDL_MIXER_VERSION}"
+          
+          TAG_NAME="sdl_mixer-v${SDL_MIXER_VERSION}"
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          
+          RELEASE_NAME="SDL_mixer v${SDL_MIXER_VERSION}"
+          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+          
+          RELEASE_BODY="Automated release of SDL_mixer v${SDL_MIXER_VERSION} (for SDL3). Built using '3-latest' for SDL_mixer."
+          echo "release_body<<EOF" >> $GITHUB_OUTPUT
+          echo "${RELEASE_BODY}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "Release Tag: ${TAG_NAME}"
+          echo "Release Name: ${RELEASE_NAME}"
+
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "${{ steps.release_info.outputs.tag_name }}" --repo "$GH_REPO"; then
+            echo "Release ${{ steps.release_info.outputs.tag_name }} already exists."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release ${{ steps.release_info.outputs.tag_name }} does not exist. Proceeding to create."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Download all SDL_mixer build artifacts
+        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: List downloaded files for release
+        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Listing contents of release-assets:"
+          ls -R release-assets
+          echo "Expected assets (e.g., release-assets/sdl3-mixer-linux-vX.Y.Z.zip/sdl3-mixer-linux-vX.Y.Z.zip):"
+          find release-assets -type f -name "*.zip"
+
+      - name: Create GitHub Release
+        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.release_name }}
+          body: ${{ steps.release_info.outputs.body }}
+          files: release-assets/*/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
