@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          arch: [x64, x86, arm64]
+          arch: [x64]
     steps:
       - name: Download release build
         run: wget https://github.com/libsdl-org/SDL_image/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip

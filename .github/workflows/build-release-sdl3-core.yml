@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          arch: [x64, x86, arm64]
+          arch: [x64]
 
     steps:
       - name: Download release build
@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          target: [iOS, '']
+          target: ['']
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -121,7 +121,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with: 
             name: sdl-apple-${{ matrix.target }}
-            path: SDL/build/*
+            path: SDL/build/Release/*.dylib
 
   create-release:
     name: Create GitHub Release
@@ -148,8 +148,7 @@ jobs:
             artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-windows-x86/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x86.zip
             artifacts/sdl-windows-arm64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-arm64.zip
-            artifacts/sdl-linux/*
-            artifacts/sdl-apple-iOS/*
-            artifacts/sdl-apple-/*
+            artifacts/sdl-linux/*.so.0
+            artifacts/sdl-apple-/*.dylib
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
