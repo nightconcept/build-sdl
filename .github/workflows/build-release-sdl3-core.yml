@@ -89,12 +89,16 @@ jobs:
             path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple
+    name: Build for Apple (${{ matrix.arch }})
     runs-on: macos-14
     needs: determine-version
     defaults:
       run:
         working-directory: SDL
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -109,7 +113,7 @@ jobs:
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
           # CMAKE_SYSTEM_NAME is not strictly needed here as it defaults to the host OS.
           # For cross-compilation to iOS/tvOS etc. it would be e.g. -DCMAKE_SYSTEM_NAME=iOS
-          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
           -DCMAKE_BUILD_TYPE=Release
           -DSDL_SHARED=ON
           -DSDL_STATIC=OFF
@@ -123,12 +127,12 @@ jobs:
         working-directory: SDL/build/Release
         run: |
           # Zipping libSDL3.0.dylib, which is typically the actual library file
-          zip "../../SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3.0.dylib
+          zip "../../SDL3-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip" libSDL3.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl-apple-zip
-            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
+            name: sdl-apple-${{ matrix.arch }}-zip
+            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip
 
   create-release:
     name: Create GitHub Release
@@ -154,6 +158,7 @@ jobs:
           files: |
             artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-linux-zip/*.zip
-            artifacts/sdl-apple-zip/*.zip
+            artifacts/sdl-apple-arm64-zip/*.zip
+            artifacts/sdl-apple-x86_64-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

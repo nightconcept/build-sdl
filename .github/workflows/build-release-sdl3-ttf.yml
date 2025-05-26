@@ -113,10 +113,13 @@ jobs:
             path: SDL_ttf/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple (Universal)
+    name: Build for Apple (${{ matrix.arch }})
     runs-on: macos-latest
     needs: determine-version
     strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
     defaults:
       run:
         working-directory: SDL_ttf
@@ -129,7 +132,7 @@ jobs:
         with:
           cmake-generator: Ninja
           cmake-arguments: |
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DSDL_DISABLE_INSTALL_DOCS=ON \
             -DSDL_INSTALL_TESTS=OFF
           version: 3-head
@@ -148,7 +151,7 @@ jobs:
         run: >
           cmake -G Ninja
           -DBUILD_SHARED_LIBS=ON
-          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON
           -DSDLTTF_HARFBUZZ=ON
           -DSDLTTF_WERROR=ON
@@ -167,12 +170,12 @@ jobs:
         working-directory: SDL_ttf/build/Release
         run: |
           # Assuming libSDL3_ttf.0.dylib is the correct file
-          zip "../../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_ttf.0.dylib
+          zip "../../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip" libSDL3_ttf.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl-ttf-apple-zip
-            path: SDL_ttf/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
+            name: sdl-ttf-apple-macOS-${{ matrix.arch }}-zip
+            path: SDL_ttf/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip
 
   create-release:
     name: Create GitHub Release for SDL_ttf
@@ -198,6 +201,7 @@ jobs:
           files: |
             artifacts/sdl-ttf-windows-x64/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-ttf-linux-zip/*.zip
-            artifacts/sdl-ttf-apple-zip/*.zip
+            artifacts/sdl-ttf-apple-macOS-arm64-zip/*.zip
+            artifacts/sdl-ttf-apple-macOS-x86_64-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
