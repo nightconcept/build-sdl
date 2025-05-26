@@ -1,227 +1,141 @@
-name: Build and Release SDL_ttf
+name: Build SDL_ttf
 
 on:
-  workflow_dispatch: # Manual trigger
-  schedule:
-    - cron: '0 3 * * *' # Run daily at 5 AM UTC
+  workflow_dispatch:
+
+env:
+  TTF_VERSION: 3.2.0
 
 jobs:
-  build_sdl_ttf:
-    name: Build SDL_ttf on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    name: Download Windows
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    outputs:
-      sdl_ttf_version: ${{ steps.version_discovery.outputs.sdl_ttf_version }}
-
+          arch: [x64]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Download release build
+        run: wget https://github.com/libsdl-org/SDL_ttf/releases/download/release-${{ env.TTF_VERSION }}/SDL3_ttf-${{ env.TTF_VERSION }}-win32-${{ matrix.arch }}.zip
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-ttf-windows-${{ matrix.arch }}
+            path: SDL3_ttf-${{ env.TTF_VERSION }}-win32-${{ matrix.arch }}.zip
 
-      - name: Setup SDL3 and SDL_ttf
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
+    defaults:
+      run:
+        working-directory: SDL_ttf
+    steps:
+      - name: Set up Ninja
+        uses: aseprite/get-ninja@main
+      - name: Set up SDL
+        uses: libsdl-org/setup-sdl@main
+        id: sdl
+        with:
+          cmake-generator: Ninja
+          version: 3-head
+          shell: sh
+      - name: Set up Linux dependencies
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install \
+            cmake \
+            file \
+            fonts-dejavu-core \
+            libfreetype-dev \
+            libharfbuzz-dev \
+            pkg-config \
+            ${NULL+}
+      - name: Clone SDL_ttf
+        working-directory: .
+        run: git clone --recurse-submodules --branch release-${{ env.TTF_VERSION }} https://github.com/libsdl-org/SDL_ttf.git
+      - name: Check that versioning is consistent
+        # We only need to run this once: arbitrarily use the Linux build
+        run: ./build-scripts/test-versioning.sh
+      - name: Configure
+        run: >
+          cmake -G Ninja
+          -DBUILD_SHARED_LIBS=ON
+          -DSDLTTF_HARFBUZZ=ON
+          -DSDLTTF_WERROR=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDL_DISABLE_INSTALL=ON
+          -DSDL_DISABLE_INSTALL_DOCS=ON
+          -DSDL_INSTALL_TESTS=OFF
+          -DSDLTTF_INSTALL_MAN=OFF
+          -DSDLTTF_VENDORED=ON
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-ttf-linux
+            path: SDL_ttf/build/*.so.0
+
+  build-macos:
+    name: Build for Apple
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+          arch: [arm64, x86_64]
+    defaults:
+      run:
+        working-directory: SDL_ttf
+    steps:
+      - name: Set up Ninja
+        uses: aseprite/get-ninja@main
+      - name: Set up SDL
         id: sdl
         uses: libsdl-org/setup-sdl@main
         with:
-          version: '3-latest' # SDL3 core dependency
-          version-sdl-ttf: '3-latest' # SDL_ttf itself
-          pre-release: 'true'
-          build-type: 'Release'
-          install-linux-dependencies: 'true'
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Discover SDL_ttf version
-        id: version_discovery
-        shell: bash
+          cmake-generator: Ninja
+          cmake-arguments: |
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DSDL_DISABLE_INSTALL_DOCS=ON \
+            -DSDL_INSTALL_TESTS=OFF
+          version: 3-head
+          shell: sh
+      - name: Setup MacOS dependencies
+        working-directory: .
         run: |
-          SDL_TTF_HEADER="${{ steps.sdl.outputs.prefix }}/include/SDL3/SDL_ttf.h"
-          if [ ! -f "$SDL_TTF_HEADER" ]; then
-            echo "Error: SDL_ttf.h not found at $SDL_TTF_HEADER"
-            exit 1
-          fi
-          MAJOR=$(grep '#define SDL_TTF_MAJOR_VERSION' "$SDL_TTF_HEADER" | awk '{print $3}')
-          MINOR=$(grep '#define SDL_TTF_MINOR_VERSION' "$SDL_TTF_HEADER" | awk '{print $3}')
-          PATCH=$(grep '#define SDL_TTF_PATCHLEVEL' "$SDL_TTF_HEADER" | awk '{print $3}')
-          if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
-            echo "Error: Could not parse SDL_ttf version from $SDL_TTF_HEADER"
-            exit 1
-          fi
-          VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "Discovered SDL_ttf version: $VERSION"
-          echo "$VERSION" > sdl_ttf_version.txt
-          echo "sdl_ttf_version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Created sdl_ttf_version.txt with content: $(cat sdl_ttf_version.txt)"
-
-      - name: Upload SDL_ttf version artifact (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+            brew install \
+              freetype \
+              harfbuzz \
+              ${NULL+}
+      - name: Clone SDL_ttf
+        working-directory: .
+        run: git clone --recurse-submodules --branch release-${{ env.TTF_VERSION }} https://github.com/libsdl-org/SDL_ttf.git
+      - name: Configure
+        run: >
+          cmake -G Ninja
+          -DBUILD_SHARED_LIBS=ON
+          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          -DSDLTTF_HARFBUZZ=ON
+          -DSDLTTF_WERROR=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDL_DISABLE_INSTALL=ON
+          -DSDL_DISABLE_INSTALL_DOCS=ON
+          -DSDL_INSTALL_TESTS=OFF
+          -DSDLTTF_INSTALL_MAN=OFF
+          -DSDLTTF_VENDORED=ON
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
         uses: actions/upload-artifact@v4
-        with:
-          name: sdl-ttf-version-info
-          path: sdl_ttf_version.txt
-
-      - name: Set OS specific names and paths
-        id: names
-        shell: bash
-        run: |
-          OS_SLUG=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          echo "os_slug=${OS_SLUG}" >> $GITHUB_OUTPUT
-          SDL_TTF_VERSION_STR="${{ steps.version_discovery.outputs.sdl_ttf_version }}"
-          ARCHIVE_NAME="sdl3-ttf-${OS_SLUG}-v${SDL_TTF_VERSION_STR}.zip"
-          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
-          echo "Artifact will be named: ${ARCHIVE_NAME}"
-          echo "SDL_INSTALL_PREFIX=${{ steps.sdl.outputs.prefix }}" >> $GITHUB_OUTPUT
-
-      - name: Package SDL_ttf files
-        shell: bash
-        env:
-          SDL_INSTALL_PREFIX: ${{ steps.sdl.outputs.prefix }}
-          OS_SLUG: ${{ steps.names.outputs.os_slug }}
-          ARCHIVE_NAME: ${{ steps.names.outputs.archive_name }}
-          DIST_DIR_NAME: "sdl3_ttf_dist"
-        run: |
-          echo "Packaging SDL_ttf files from $SDL_INSTALL_PREFIX for $OS_SLUG"
-          mkdir -p "$DIST_DIR_NAME/include/SDL3"
-          mkdir -p "$DIST_DIR_NAME/lib/cmake/SDL3_ttf"
-          mkdir -p "$DIST_DIR_NAME/lib/pkgconfig"
-          mkdir -p "$DIST_DIR_NAME/bin" # For Windows DLL
-          mkdir -p "$DIST_DIR_NAME/share/licenses/SDL_ttf"
-
-          # Header
-          cp "$SDL_INSTALL_PREFIX/include/SDL3/SDL_ttf.h" "$DIST_DIR_NAME/include/SDL3/"
-
-          # CMake files
-          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_ttf/SDL3_ttfConfig.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_ttf/"
-          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_ttf/SDL3_ttfConfigVersion.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_ttf/"
-          find "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_ttf/" -name "SDL3_ttfTargets*.cmake" -exec cp {} "$DIST_DIR_NAME/lib/cmake/SDL3_ttf/" \;
-
-          # Pkg-config
-          cp "$SDL_INSTALL_PREFIX/lib/pkgconfig/sdl3-ttf.pc" "$DIST_DIR_NAME/lib/pkgconfig/"
-          
-          # License
-          LICENSE_FILE_PATH=""
-          if [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_ttf/LICENSE.txt" ]; then
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_ttf/LICENSE.txt"
-          elif [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_ttf/COPYING" ]; then # Common alternative
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_ttf/COPYING"
-          elif [ -f "$SDL_INSTALL_PREFIX/LICENSE.SDL_ttf.txt" ]; then # Fallback
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/LICENSE.SDL_ttf.txt"
-          fi
-          if [ -n "$LICENSE_FILE_PATH" ]; then
-            cp "$LICENSE_FILE_PATH" "$DIST_DIR_NAME/share/licenses/SDL_ttf/"
-            echo "Copied license: $LICENSE_FILE_PATH"
-          else
-            echo "Warning: SDL_ttf license file not found at expected locations."
-          fi
-
-          # Libraries
-          if [ "$OS_SLUG" == "linux" ]; then
-            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_ttf.so"* "$DIST_DIR_NAME/lib/"
-          elif [ "$OS_SLUG" == "macos" ]; then
-            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_ttf.dylib"* "$DIST_DIR_NAME/lib/"
-          elif [ "$OS_SLUG" == "windows" ]; then
-            cp "$SDL_INSTALL_PREFIX/bin/SDL3_ttf.dll" "$DIST_DIR_NAME/bin/"
-            cp "$SDL_INSTALL_PREFIX/lib/SDL3_ttf.lib" "$DIST_DIR_NAME/lib/"
-            # SDL_ttf depends on FreeType, which setup-sdl should handle.
-            # If FreeType DLLs (e.g., freetype.dll) are placed in bin/ by setup-sdl, they should be copied too.
-            # For now, assuming setup-sdl bundles it or it's a system dependency.
-            # A more robust script might explicitly copy known dependencies like freetype.dll if found.
-          fi
-          
-          echo "Contents of $DIST_DIR_NAME:"
-          ls -R "$DIST_DIR_NAME"
-          
-          cd "$DIST_DIR_NAME"
-          zip -r "${{ github.workspace }}/$ARCHIVE_NAME" .
-          echo "Created ${{ github.workspace }}/$ARCHIVE_NAME"
-
-      - name: Upload SDL_ttf Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.names.outputs.archive_name }}
-          path: ${{ github.workspace }}/${{ steps.names.outputs.archive_name }}
-
-  release_sdl_ttf:
-    name: Create SDL_ttf GitHub Release
-    needs: build_sdl_ttf
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download SDL_ttf version artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sdl-ttf-version-info
-          path: .
-
-      - name: Read SDL_ttf Version and Set Release Info
-        id: release_info
-        shell: bash
-        run: |
-          if [ ! -f sdl_ttf_version.txt ]; then
-            echo "Error: sdl_ttf_version.txt not found!"
-            exit 1
-          fi
-          SDL_TTF_VERSION=$(cat sdl_ttf_version.txt)
-          if [ -z "$SDL_TTF_VERSION" ]; then
-            echo "Error: SDL_TTF_VERSION is empty in sdl_ttf_version.txt!"
-            exit 1
-          fi
-          echo "Read SDL_TTF_VERSION: ${SDL_TTF_VERSION}"
-          
-          TAG_NAME="sdl_ttf-v${SDL_TTF_VERSION}"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_NAME="SDL_ttf v${SDL_TTF_VERSION}"
-          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_BODY="Automated release of SDL_ttf v${SDL_TTF_VERSION} (for SDL3). Built using '3-latest' for SDL_ttf."
-          echo "release_body<<EOF" >> $GITHUB_OUTPUT
-          echo "${RELEASE_BODY}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "Release Tag: ${TAG_NAME}"
-          echo "Release Name: ${RELEASE_NAME}"
-
-      - name: Check if release already exists
-        id: check_release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release view "${{ steps.release_info.outputs.tag_name }}" --repo "$GH_REPO"; then
-            echo "Release ${{ steps.release_info.outputs.tag_name }} already exists."
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "Release ${{ steps.release_info.outputs.tag_name }} does not exist. Proceeding to create."
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-
-      - name: Download all SDL_ttf build artifacts
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-
-      - name: List downloaded files for release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "Listing contents of release-assets:"
-          ls -R release-assets
-          echo "Expected assets (e.g., release-assets/sdl3-ttf-linux-vX.Y.Z.zip/sdl3-ttf-linux-vX.Y.Z.zip):"
-          find release-assets -type f -name "*.zip"
-
-      - name: Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: ${{ steps.release_info.outputs.release_name }}
-          body: ${{ steps.release_info.outputs.body }}
-          files: release-assets/*/*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with: 
+            name: sdl-ttf-apple-macOS-${{ matrix.arch }}
+            path: SDL_ttf/build/*
