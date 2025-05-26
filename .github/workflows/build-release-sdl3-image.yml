@@ -121,15 +121,9 @@ jobs:
             path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple (${{ matrix.platform.arch }})
+    name: Build for Apple (Universal)
     runs-on: macos-latest
     needs: determine-version
-    strategy:
-      fail-fast: false
-      matrix:
-          platform:
-          - {arch: 'arm64', flags: '-DSDL_CPU_ARM64=ON'}
-          - {arch: 'x86_64', flags: '-DSDL_CPU_X64=ON'}
     defaults:
       run:
         working-directory: SDL_image
@@ -142,10 +136,9 @@ jobs:
         with:
           cmake-generator: Ninja
           cmake-arguments: |
-            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DSDL_DISABLE_INSTALL_DOCS=ON \
-            -DSDL_INSTALL_TESTS=OFF \
-            ${{ matrix.platform.flags }}
+            -DSDL_INSTALL_TESTS=OFF
           version: 3-head
           shell: sh
       - name: Setup MacOS dependencies
@@ -165,7 +158,7 @@ jobs:
         run: >
           cmake -G Ninja
           -DBUILD_SHARED_LIBS=ON
-          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}"
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_BUILD_TYPE=Release
           -DSDL_SHARED=ON
           -DSDL_STATIC=OFF
@@ -174,20 +167,19 @@ jobs:
           -DSDLIMAGE_SAMPLES=OFF
           -DSDLIMAGE_INSTALL_MAN=OFF
           -DSDLIMAGE_VENDORED=ON
-          ${{ matrix.platform.flags }}
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
       - name: Package macOS library
         working-directory: SDL_image/build
         run: |
-          # Assuming libSDL3_image.0.dylib is the correct file
-          zip "../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip" libSDL3_image.0.dylib
+          # Assuming libSDL3_image.0.dylib is the correct file and is now universal
+          zip "../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_image.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl-image-apple-macOS-${{ matrix.platform.arch }}-zip
-            path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip
+            name: sdl-image-apple-macOS-universal-zip
+            path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release for SDL_image
@@ -213,7 +205,6 @@ jobs:
           files: |
             artifacts/sdl-image-windows-x64/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-image-linux-zip/*.zip
-            artifacts/sdl-image-apple-macOS-arm64-zip/*.zip
-            artifacts/sdl-image-apple-macOS-x86_64-zip/*.zip
+            artifacts/sdl-image-apple-macOS-universal-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
