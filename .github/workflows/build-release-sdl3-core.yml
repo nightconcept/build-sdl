@@ -17,7 +17,7 @@ jobs:
       - name: Get latest SDL3 release info
         id: get_version
         run: |
-          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 1 --json tagName --jq -r ".[0].tagName")
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 1 --json tagName | jq -r ".[0].tagName")
           echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
           # Ensure RELEASE_TAG is not empty or null
           if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then

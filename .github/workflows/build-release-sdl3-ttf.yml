@@ -14,7 +14,7 @@ jobs:
       - name: Get latest SDL_ttf release info
         id: get_version
         run: |
-          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_ttf --limit 1 --json tagName --jq -r ".[0].tagName")
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_ttf --limit 1 --json tagName | jq -r ".[0].tagName")
           echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
           if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
             echo "::error::Failed to determine RELEASE_TAG."
