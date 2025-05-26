@@ -14,17 +14,23 @@ jobs:
       - name: Get latest SDL_ttf release info
         id: get_version
         run: |
-          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_ttf --limit 1 --json tagName | jq -r ".[0].tagName")
-          echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
-          if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
-            echo "::error::Failed to determine RELEASE_TAG."
+          ORIGINAL_RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_ttf --limit 1 --json tagName | jq -r ".[0].tagName")
+          echo "Determined ORIGINAL_RELEASE_TAG: ${ORIGINAL_RELEASE_TAG}"
+          if [ -z "${ORIGINAL_RELEASE_TAG}" ] || [ "${ORIGINAL_RELEASE_TAG}" == "null" ]; then
+            echo "::error::Failed to determine ORIGINAL_RELEASE_TAG."
             exit 1
           fi
-          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
-          VERSION_NUMBER=$(echo "${RELEASE_TAG}" | sed 's/^release-//')
+
+          # Construct the new release tag for sdl3_ttf
+          NEW_RELEASE_TAG="sdl3_ttf-${ORIGINAL_RELEASE_TAG}"
+          echo "Constructed NEW_RELEASE_TAG: ${NEW_RELEASE_TAG}"
+          echo "release_tag=${NEW_RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+          # VERSION_NUMBER is derived from the ORIGINAL_RELEASE_TAG (e.g., release-x.y.z -> x.y.z)
+          VERSION_NUMBER=$(echo "${ORIGINAL_RELEASE_TAG}" | sed 's/^release-//')
           echo "Determined VERSION_NUMBER: ${VERSION_NUMBER}"
           if [ -z "${VERSION_NUMBER}" ]; then
-            echo "::error::Failed to determine VERSION_NUMBER from RELEASE_TAG: ${RELEASE_TAG}."
+            echo "::error::Failed to determine VERSION_NUMBER from ORIGINAL_RELEASE_TAG: ${ORIGINAL_RELEASE_TAG}."
             exit 1
           fi
           echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
