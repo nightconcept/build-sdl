@@ -95,6 +95,10 @@ jobs:
     defaults:
       run:
         working-directory: SDL
+    strategy:
+      fail-fast: false
+      matrix:
+          target: ['']
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -107,7 +111,6 @@ jobs:
         run: >
           cmake -G "Xcode"
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
-          -DCMAKE_SYSTEM_NAME=${{ matrix.target }}
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_BUILD_TYPE=Release
           -DSDL_SHARED=ON
