@@ -1,226 +1,205 @@
-name: Build and Release SDL_image
+name: Build SDL_image
 
 on:
-  workflow_dispatch: # Manual trigger
-  schedule:
-    - cron: '0 1 * * *' # Run daily at 1 AM UTC
+  workflow_dispatch:
 
 jobs:
-  build_sdl_image:
-    name: Build SDL_image on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
+  determine-version:
+    name: Determine Latest SDL_image Version
+    runs-on: ubuntu-latest
     outputs:
-      sdl_image_version: ${{ steps.version_discovery.outputs.sdl_image_version }} # Output for artifact naming
-
+      release_tag: ${{ steps.get_version.outputs.release_tag }}
+      version_number: ${{ steps.get_version.outputs.version_number }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Get latest SDL_image release info
+        id: get_version
+        run: |
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_image --limit 1 --json tagName --jq -r ".[0].tagName")
+          echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
+          if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
+            echo "::error::Failed to determine RELEASE_TAG."
+            exit 1
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          VERSION_NUMBER=$(echo "${RELEASE_TAG}" | sed 's/^release-//')
+          echo "Determined VERSION_NUMBER: ${VERSION_NUMBER}"
+          if [ -z "${VERSION_NUMBER}" ]; then
+            echo "::error::Failed to determine VERSION_NUMBER from RELEASE_TAG: ${RELEASE_TAG}."
+            exit 1
+          fi
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup SDL3 and SDL_image
+  build-windows:
+    name: Download Windows
+    runs-on: ubuntu-latest
+    needs: determine-version
+    strategy:
+      fail-fast: false
+      matrix:
+          arch: [x64, x86, arm64]
+    steps:
+      - name: Download release build
+        run: wget https://github.com/libsdl-org/SDL_image/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-image-windows-${{ matrix.arch }}
+            path: SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    needs: determine-version
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
+    defaults:
+      run:
+        working-directory: SDL_image
+    steps:
+      - name: Set up Ninja
+        uses: aseprite/get-ninja@main
+      - name: Set up SDL
+        uses: libsdl-org/setup-sdl@main
+        id: sdl
+        with:
+          cmake-generator: Ninja
+          version: 3-head
+          shell: sh
+      - name: Set up Linux dependencies
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install \
+          libavif-dev \
+          libjpeg-dev \
+          libpng-dev \
+          libtiff-dev \
+          libwebp-dev \
+          zlib1g-dev \
+          ${NULL+}
+      - name: Set up NASM
+        uses: ilammy/setup-nasm@v1
+      - name: Clone SDL_image
+        working-directory: .
+        run: git clone --recurse-submodules --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL_image.git
+      - name: Check that versioning is consistent
+        # We only need to run this once: arbitrarily use the Linux build
+        run: ./build-scripts/test-versioning.sh
+      - name: Configure
+        run: >
+          cmake -G Ninja
+          -DBUILD_SHARED_LIBS=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDL_DISABLE_INSTALL=ON
+          -DSDL_DISABLE_INSTALL_DOCS=ON
+          -DSDLIMAGE_TESTS=OFF
+          -DSDLIMAGE_TESTS_INSTALL=OFF
+          -DSDLIMAGE_SAMPLES=OFF
+          -DSDLIMAGE_INSTALL_MAN=OFF
+          -DSDLIMAGE_VENDORED=ON
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-image-linux
+            path: SDL_image/build/*.so.0
+
+  build-macos:
+    name: Build for Apple (${{ matrix.platform.arch }})
+    runs-on: macos-latest
+    needs: determine-version
+    strategy:
+      fail-fast: false
+      matrix:
+          platform:
+          - {arch: 'arm64', flags: '-DSDL_CPU_ARM64=ON'}
+          - {arch: 'x86_64', flags: '-DSDL_CPU_X64=ON'}
+    defaults:
+      run:
+        working-directory: SDL_image
+    steps:
+      - name: Set up Ninja
+        uses: aseprite/get-ninja@main
+      - name: Set up SDL
         id: sdl
         uses: libsdl-org/setup-sdl@main
         with:
-          version: '3-latest' # SDL3 core dependency
-          version-sdl-image: '3-latest' # SDL_image itself
-          pre-release: 'true'
-          build-type: 'Release'
-          install-linux-dependencies: 'true'
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Discover SDL_image version
-        id: version_discovery
-        shell: bash
+          cmake-generator: Ninja
+          cmake-arguments: |
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}" \
+            -DSDL_DISABLE_INSTALL_DOCS=ON \
+            -DSDL_INSTALL_TESTS=OFF \
+            ${{ matrix.platform.flags }}
+          version: 3-head
+          shell: sh
+      - name: Setup MacOS dependencies
+        working-directory: .
         run: |
-          SDL_IMAGE_HEADER="${{ steps.sdl.outputs.prefix }}/include/SDL3/SDL_image.h"
-          if [ ! -f "$SDL_IMAGE_HEADER" ]; then
-            echo "Error: SDL_image.h not found at $SDL_IMAGE_HEADER"
-            exit 1
-          fi
-          MAJOR=$(grep '#define SDL_IMAGE_MAJOR_VERSION' "$SDL_IMAGE_HEADER" | awk '{print $3}')
-          MINOR=$(grep '#define SDL_IMAGE_MINOR_VERSION' "$SDL_IMAGE_HEADER" | awk '{print $3}')
-          PATCH=$(grep '#define SDL_IMAGE_PATCHLEVEL' "$SDL_IMAGE_HEADER" | awk '{print $3}')
-          if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
-            echo "Error: Could not parse SDL_image version from $SDL_IMAGE_HEADER"
-            exit 1
-          fi
-          VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "Discovered SDL_image version: $VERSION"
-          echo "$VERSION" > sdl_image_version.txt
-          echo "sdl_image_version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Created sdl_image_version.txt with content: $(cat sdl_image_version.txt)"
-
-      - name: Upload SDL_image version artifact (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+          brew install \
+          jpeg-xl \
+          libavif \
+          webp \
+          ${NULL+}
+      - name: Set up NASM
+        uses: ilammy/setup-nasm@v1
+      - name: Clone SDL_image
+        working-directory: .
+        run: git clone --recurse-submodules --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL_image.git
+      - name: Configure
+        run: >
+          cmake -G Ninja
+          -DBUILD_SHARED_LIBS=ON
+          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDLIMAGE_TESTS=OFF
+          -DSDLIMAGE_TESTS_INSTALL=OFF
+          -DSDLIMAGE_SAMPLES=OFF
+          -DSDLIMAGE_INSTALL_MAN=OFF
+          -DSDLIMAGE_VENDORED=ON
+          ${{ matrix.platform.flags }}
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
         uses: actions/upload-artifact@v4
-        with:
-          name: sdl-image-version-info
-          path: sdl_image_version.txt
+        with: 
+            name: sdl-image-apple-macOS-${{ matrix.platform.arch }}
+            path: SDL_image/build/*
 
-      - name: Set OS specific names and paths
-        id: names
-        shell: bash
-        run: |
-          OS_SLUG=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          echo "os_slug=${OS_SLUG}" >> $GITHUB_OUTPUT
-          SDL_IMAGE_VERSION_STR="${{ steps.version_discovery.outputs.sdl_image_version }}"
-          ARCHIVE_NAME="sdl3-image-${OS_SLUG}-v${SDL_IMAGE_VERSION_STR}.zip"
-          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
-          echo "Artifact will be named: ${ARCHIVE_NAME}"
-          echo "SDL_INSTALL_PREFIX=${{ steps.sdl.outputs.prefix }}" >> $GITHUB_OUTPUT
-
-      - name: Package SDL_image files
-        shell: bash
-        env:
-          SDL_INSTALL_PREFIX: ${{ steps.sdl.outputs.prefix }}
-          OS_SLUG: ${{ steps.names.outputs.os_slug }}
-          ARCHIVE_NAME: ${{ steps.names.outputs.archive_name }}
-          DIST_DIR_NAME: "sdl3_image_dist"
-        run: |
-          echo "Packaging SDL_image files from $SDL_INSTALL_PREFIX for $OS_SLUG"
-          mkdir -p "$DIST_DIR_NAME/include/SDL3"
-          mkdir -p "$DIST_DIR_NAME/lib/cmake/SDL3_image"
-          mkdir -p "$DIST_DIR_NAME/lib/pkgconfig"
-          mkdir -p "$DIST_DIR_NAME/bin" # For Windows DLL
-          mkdir -p "$DIST_DIR_NAME/share/licenses/SDL_image"
-
-          # Header
-          cp "$SDL_INSTALL_PREFIX/include/SDL3/SDL_image.h" "$DIST_DIR_NAME/include/SDL3/"
-
-          # CMake files
-          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_image/SDL3_imageConfig.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_image/"
-          cp "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_image/SDL3_imageConfigVersion.cmake" "$DIST_DIR_NAME/lib/cmake/SDL3_image/"
-          # SDL3_imageTargets.cmake might be platform specific or not exist if static, copy if found
-          find "$SDL_INSTALL_PREFIX/lib/cmake/SDL3_image/" -name "SDL3_imageTargets*.cmake" -exec cp {} "$DIST_DIR_NAME/lib/cmake/SDL3_image/" \;
-
-          # Pkg-config
-          cp "$SDL_INSTALL_PREFIX/lib/pkgconfig/sdl3-image.pc" "$DIST_DIR_NAME/lib/pkgconfig/"
-
-          # License (attempt to find common locations)
-          LICENSE_FILE_PATH=""
-          if [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_image/LICENSE.txt" ]; then
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_image/LICENSE.txt"
-          elif [ -f "$SDL_INSTALL_PREFIX/share/licenses/SDL_image/COPYING" ]; then
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/share/licenses/SDL_image/COPYING"
-          elif [ -f "$SDL_INSTALL_PREFIX/LICENSE.SDL_image.txt" ]; then # Fallback, less standard
-            LICENSE_FILE_PATH="$SDL_INSTALL_PREFIX/LICENSE.SDL_image.txt"
-          fi
-          if [ -n "$LICENSE_FILE_PATH" ]; then
-            cp "$LICENSE_FILE_PATH" "$DIST_DIR_NAME/share/licenses/SDL_image/"
-            echo "Copied license: $LICENSE_FILE_PATH"
-          else
-            echo "Warning: SDL_image license file not found at expected locations."
-          fi
-          
-          # Libraries
-          if [ "$OS_SLUG" == "linux" ]; then
-            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_image.so"* "$DIST_DIR_NAME/lib/"
-          elif [ "$OS_SLUG" == "macos" ]; then
-            cp "$SDL_INSTALL_PREFIX/lib/libSDL3_image.dylib"* "$DIST_DIR_NAME/lib/"
-          elif [ "$OS_SLUG" == "windows" ]; then
-            cp "$SDL_INSTALL_PREFIX/bin/SDL3_image.dll" "$DIST_DIR_NAME/bin/"
-            cp "$SDL_INSTALL_PREFIX/lib/SDL3_image.lib" "$DIST_DIR_NAME/lib/"
-            # Also copy dependency DLLs if any (e.g. libpng, libjpeg) - this is complex, setup-sdl should handle it.
-            # For now, we assume SDL3_image.dll is self-contained or system provides its deps.
-          fi
-          
-          echo "Contents of $DIST_DIR_NAME:"
-          ls -R "$DIST_DIR_NAME"
-          
-          cd "$DIST_DIR_NAME"
-          zip -r "${{ github.workspace }}/$ARCHIVE_NAME" .
-          echo "Created ${{ github.workspace }}/$ARCHIVE_NAME"
-
-      - name: Upload SDL_image Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.names.outputs.archive_name }}
-          path: ${{ github.workspace }}/${{ steps.names.outputs.archive_name }}
-
-  release_sdl_image:
-    name: Create SDL_image GitHub Release
-    needs: build_sdl_image
+  create-release:
+    name: Create GitHub Release for SDL_image
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: [determine-version, build-windows, build-linux, build-macos]
     permissions:
-      contents: write
-
+      contents: write # Required to create a release
     steps:
-      - name: Download SDL_image version artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: sdl-image-version-info
-          path: .
+          path: artifacts # All artifacts will be downloaded into subdirectories under 'artifacts'
 
-      - name: Read SDL_image Version and Set Release Info
-        id: release_info
-        shell: bash
-        run: |
-          if [ ! -f sdl_image_version.txt ]; then
-            echo "Error: sdl_image_version.txt not found!"
-            exit 1
-          fi
-          SDL_IMAGE_VERSION=$(cat sdl_image_version.txt)
-          if [ -z "$SDL_IMAGE_VERSION" ]; then
-            echo "Error: SDL_IMAGE_VERSION is empty in sdl_image_version.txt!"
-            exit 1
-          fi
-          echo "Read SDL_IMAGE_VERSION: ${SDL_IMAGE_VERSION}"
-          
-          TAG_NAME="sdl_image-v${SDL_IMAGE_VERSION}"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_NAME="SDL_image v${SDL_IMAGE_VERSION}"
-          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_BODY="Automated release of SDL_image v${SDL_IMAGE_VERSION} (for SDL3). Built using '3-latest' for SDL_image."
-          echo "release_body<<EOF" >> $GITHUB_OUTPUT
-          echo "${RELEASE_BODY}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "Release Tag: ${TAG_NAME}"
-          echo "Release Name: ${RELEASE_NAME}"
+      - name: List downloaded files (for debugging)
+        run: ls -R artifacts
 
-      - name: Check if release already exists
-        id: check_release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release view "${{ steps.release_info.outputs.tag_name }}" --repo "$GH_REPO"; then
-            echo "Release ${{ steps.release_info.outputs.tag_name }} already exists."
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "Release ${{ steps.release_info.outputs.tag_name }} does not exist. Proceeding to create."
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-
-      - name: Download all SDL_image build artifacts
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets # Downloads into release-assets/<artifact_name>/<files>
-
-      - name: List downloaded files for release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "Listing contents of release-assets:"
-          ls -R release-assets
-          echo "Expected assets (e.g., release-assets/sdl3-image-linux-vX.Y.Z.zip/sdl3-image-linux-vX.Y.Z.zip):"
-          find release-assets -type f -name "*.zip"
-
-      - name: Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: ${{ steps.release_info.outputs.release_name }}
-          body: ${{ steps.release_info.outputs.body }}
-          files: release-assets/*/*.zip
+          tag_name: ${{ needs.determine-version.outputs.release_tag }} # Use the actual release tag
+          name: "SDL_image ${{ needs.determine-version.outputs.version_number }}"
+          body: "Automated release for SDL_image version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms."
+          files: |
+            artifacts/sdl-image-windows-x64/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
+            artifacts/sdl-image-windows-x86/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-x86.zip
+            artifacts/sdl-image-windows-arm64/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-arm64.zip
+            artifacts/sdl-image-linux/*
+            artifacts/sdl-image-apple-macOS-arm64/*
+            artifacts/sdl-image-apple-macOS-x86_64/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

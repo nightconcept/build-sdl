@@ -1,168 +1,155 @@
-name: Build and Release SDL3 Core
+name: Build SDL Core
 
 on:
-  workflow_dispatch: # Manual trigger
-  push:
-    branches:
-      - main # Or your preferred default/development branch
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Run daily at midnight UTC
+    - cron: '0 0 * * *' # Run daily at 5 AM UTC
+
 
 jobs:
-  build:
-    name: Build SDL3 Core on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup SDL3
-        id: sdl
-        uses: libsdl-org/setup-sdl@main
-        with:
-          version: '3-latest' # Build only SDL3 core
-          pre-release: 'true' # Allow fetching pre-release versions if '3-latest' points to one
-          build-type: 'Release'
-          install-linux-dependencies: 'true' # Action handles this for relevant OS
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Store SDL version (Linux only)
-        if: matrix.os == 'ubuntu-latest' # Only one job needs to do this
-        shell: bash
-        run: |
-          echo "SDL Version from setup-sdl: ${{ steps.sdl.outputs.version }}"
-          echo "${{ steps.sdl.outputs.version }}" > sdl_version.txt
-          echo "Created sdl_version.txt with content: $(cat sdl_version.txt)"
-
-      - name: Upload SDL version artifact (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdl-version-info
-          path: sdl_version.txt
-
-      - name: Set OS specific names
-        id: names
-        shell: bash
-        run: |
-          OS_SLUG=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          echo "os_slug=${OS_SLUG}" >> $GITHUB_OUTPUT
-          ARCHIVE_NAME="sdl3-core-${OS_SLUG}.zip"
-          echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
-          echo "Uploaded artifact will be named: ${ARCHIVE_NAME}"
-
-      - name: Archive build artifacts (Linux/macOS)
-        if: runner.os == 'Linux' || runner.os == 'macOS'
-        shell: bash
-        run: |
-          echo "Archiving from: ${{ steps.sdl.outputs.prefix }}"
-          cd "${{ steps.sdl.outputs.prefix }}"
-          zip -r "${{ github.workspace }}/${{ steps.names.outputs.archive_name }}" .
-          echo "Created ${{ github.workspace }}/${{ steps.names.outputs.archive_name }}"
-
-      - name: Archive build artifacts (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Write-Host "Archiving from: ${{ steps.sdl.outputs.prefix }}"
-          Compress-Archive -Path "${{ steps.sdl.outputs.prefix }}\*" -DestinationPath "${{ github.workspace }}\${{ steps.names.outputs.archive_name }}" -Force
-          Write-Host "Created ${{ github.workspace }}\${{ steps.names.outputs.archive_name }}"
-
-      - name: Upload SDL3 Core artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.names.outputs.archive_name }}
-          path: ${{ github.workspace }}/${{ steps.names.outputs.archive_name }}
-
-  release:
-    name: Create SDL3 Core GitHub Release
-    needs: build
+  determine-version:
+    name: Determine Latest SDL3 Version
     runs-on: ubuntu-latest
-    # Run on manual dispatch, push to main, or schedule
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'schedule'
-    permissions:
-      contents: write # Required to create releases and tags
-
+    outputs:
+      release_tag: ${{ steps.get_version.outputs.release_tag }}
+      version_number: ${{ steps.get_version.outputs.version_number }}
     steps:
-      - name: Download SDL version artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sdl-version-info
-          path: .
-
-      - name: Read SDL Version and Set Release Info
-        id: release_info
-        shell: bash
+      - name: Get latest SDL3 release info
+        id: get_version
         run: |
-          if [ ! -f sdl_version.txt ]; then
-            echo "Error: sdl_version.txt not found!"
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 1 --json tagName --jq -r ".[0].tagName")
+          echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
+          # Ensure RELEASE_TAG is not empty or null
+          if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
+            echo "::error::Failed to determine RELEASE_TAG."
             exit 1
           fi
-          SDL_VERSION=$(cat sdl_version.txt)
-          if [ -z "$SDL_VERSION" ]; then
-            echo "Error: SDL_VERSION is empty in sdl_version.txt!"
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          VERSION_NUMBER=$(echo "${RELEASE_TAG}" | sed 's/^release-//')
+          echo "Determined VERSION_NUMBER: ${VERSION_NUMBER}"
+          if [ -z "${VERSION_NUMBER}" ]; then
+            echo "::error::Failed to determine VERSION_NUMBER from RELEASE_TAG: ${RELEASE_TAG}."
             exit 1
           fi
-          echo "Read SDL_VERSION: ${SDL_VERSION}"
-          
-          TAG_NAME="sdl3-v${SDL_VERSION}"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_NAME="SDL3 Core v${SDL_VERSION}"
-          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
-          
-          RELEASE_BODY="Automated release of SDL3 Core v${SDL_VERSION}. Built using '3-latest' for SDL core."
-          echo "release_body<<EOF" >> $GITHUB_OUTPUT
-          echo "${RELEASE_BODY}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "Release Tag: ${TAG_NAME}"
-          echo "Release Name: ${RELEASE_NAME}"
-
-      - name: Check if release already exists
-        id: check_release
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release view "${{ steps.release_info.outputs.tag_name }}" --repo "$GH_REPO"; then
-            echo "Release ${{ steps.release_info.outputs.tag_name }} already exists."
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "Release ${{ steps.release_info.outputs.tag_name }} does not exist. Proceeding to create."
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true # gh release view exits with 1 if release not found
 
-      - name: Download all build artifacts
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure' # outcome check for safety
+  build-windows:
+    name: Download Windows
+    runs-on: ubuntu-latest
+    needs: determine-version
+    strategy:
+      fail-fast: false
+      matrix:
+          arch: [x64, x86, arm64]
+
+    steps:
+      - name: Download release build
+        run: wget https://github.com/libsdl-org/SDL/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-windows-${{ matrix.arch }}
+            path: SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    needs: determine-version
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
+    defaults:
+      run:
+        working-directory: SDL
+    steps:
+      - name: Clone SDL3
+        working-directory: .
+        run: git clone --depth 1 --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL.git
+      - name: Configure
+        run: >
+          cmake -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDL_DISABLE_INSTALL=ON
+          -DSDL_DISABLE_INSTALL_DOCS=ON
+          -DSDL_INSTALL_TESTS=OFF
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-linux
+            path: SDL/build/*.so.0
+
+  build-macos:
+    name: Build for Apple
+    runs-on: macos-14
+    needs: determine-version
+    defaults:
+      run:
+        working-directory: SDL
+    strategy:
+      fail-fast: false
+      matrix:
+          target: [iOS, '']
+    steps:
+      - name: Clone SDL3
+        working-directory: .
+        run: git clone --depth 1 --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL.git
+      - name: Setup Xcode version
+        uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+            xcode-version: "16.1"
+      - name: Configure
+        run: >
+          cmake -G "Xcode"
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DCMAKE_SYSTEM_NAME=${{ matrix.target }}
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_BUILD_TYPE=Release
+          -DSDL_SHARED=ON
+          -DSDL_STATIC=OFF
+          -DSDL_DISABLE_INSTALL=ON
+          -DSDL_DISABLE_INSTALL_DOCS=ON
+          -DSDL_INSTALL_TESTS=OFF
+          -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with: 
+            name: sdl-apple-${{ matrix.target }}
+            path: SDL/build/*
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-windows, build-linux, build-macos]
+    permissions:
+      contents: write # Required to create a release
+    steps:
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          path: artifacts # All artifacts will be downloaded into subdirectories under 'artifacts'
 
-      - name: List downloaded files for release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "Listing contents of release-assets:"
-          ls -R release-assets
-          echo "Expected assets (e.g., release-assets/sdl3-core-linux.zip/sdl3-core-linux.zip):"
-          find release-assets -type f -name "*.zip"
+      - name: List downloaded files (for debugging)
+        run: ls -R artifacts
 
-      - name: Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false' || steps.check_release.outcome == 'failure'
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: ${{ steps.release_info.outputs.release_name }}
-          body: ${{ steps.release_info.outputs.body }}
-          files: release-assets/*/*.zip 
+          tag_name: ${{ needs.determine-version.outputs.release_tag }}
+          name: "SDL Core ${{ needs.determine-version.outputs.version_number }}"
+          body: "Automated release for SDL Core version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms."
+          files: |
+            artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
+            artifacts/sdl-windows-x86/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x86.zip
+            artifacts/sdl-windows-arm64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-arm64.zip
+            artifacts/sdl-linux/*
+            artifacts/sdl-apple-iOS/*
+            artifacts/sdl-apple-/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
