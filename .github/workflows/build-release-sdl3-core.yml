@@ -95,10 +95,6 @@ jobs:
     defaults:
       run:
         working-directory: SDL
-    strategy:
-      fail-fast: false
-      matrix:
-          target: ['']
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -124,13 +120,13 @@ jobs:
       - name: Package macOS library
         working-directory: SDL/build/Release
         run: |
-          # Zipping libSDL3.0.dylib, which is typically the actual library file
-          zip "../../SDL3-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip" libSDL3.0.dylib
+          # Zipping libSDL3.0.dylib, which is the universal library file
+          zip "../../SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl-apple-${{ matrix.arch }}-zip
-            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.arch }}.zip
+            name: sdl-apple-universal-zip
+            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release
@@ -156,7 +152,6 @@ jobs:
           files: |
             artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-linux-zip/*.zip
-            artifacts/sdl-apple-arm64-zip/*.zip
-            artifacts/sdl-apple-x86_64-zip/*.zip
+            artifacts/sdl-apple-universal-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
