@@ -89,16 +89,12 @@ jobs:
             path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple (${{ matrix.arch }})
+    name: Build for Apple
     runs-on: macos-14
     needs: determine-version
     defaults:
       run:
         working-directory: SDL
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, x86_64]
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -111,9 +107,8 @@ jobs:
         run: >
           cmake -G "Xcode"
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
-          # CMAKE_SYSTEM_NAME is not strictly needed here as it defaults to the host OS.
-          # For cross-compilation to iOS/tvOS etc. it would be e.g. -DCMAKE_SYSTEM_NAME=iOS
-          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
+          -DCMAKE_SYSTEM_NAME=${{ matrix.target }}
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_BUILD_TYPE=Release
           -DSDL_SHARED=ON
           -DSDL_STATIC=OFF
