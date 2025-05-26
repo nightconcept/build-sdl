@@ -3,10 +3,34 @@ name: Build SDL_mixer
 on:
   workflow_dispatch:
 
-env:
-  MIXER_BRANCH: main
-
 jobs:
+  determine-version:
+    name: Determine Latest SDL_mixer Version
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.get_version.outputs.release_tag }}
+      version_number: ${{ steps.get_version.outputs.version_number }}
+    steps:
+      - name: Get latest SDL_mixer release info
+        id: get_version
+        run: |
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_mixer --limit 1 --json tagName --jq -r ".[0].tagName")
+          echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
+          if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
+            echo "::error::Failed to determine RELEASE_TAG."
+            exit 1
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          VERSION_NUMBER=$(echo "${RELEASE_TAG}" | sed 's/^release-//')
+          echo "Determined VERSION_NUMBER: ${VERSION_NUMBER}"
+          if [ -z "${VERSION_NUMBER}" ]; then
+            echo "::error::Failed to determine VERSION_NUMBER from RELEASE_TAG: ${RELEASE_TAG}."
+            exit 1
+          fi
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 # Windows only has binaries to download for the SDL2 version it seems
 #  build-windows:
 #    name: Download Windows
@@ -27,6 +51,7 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
+    needs: determine-version
     container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
     defaults:
       run:
@@ -61,7 +86,7 @@ jobs:
           ${NULL+}
       - name: Clone SDL_mixer
         working-directory: .
-        run: git clone --recurse-submodules --branch ${{ env.MIXER_BRANCH }} https://github.com/libsdl-org/SDL_mixer.git
+        run: git clone --recurse-submodules --branch main https://github.com/libsdl-org/SDL_mixer.git
       - name: Check that versioning is consistent
         # We only need to run this once: arbitrarily use the Linux build
         run: ./build-scripts/test-versioning.sh
@@ -97,6 +122,7 @@ jobs:
   build-macos:
     name: Build for Apple (${{ matrix.platform.arch }})
     runs-on: macos-latest
+    needs: determine-version
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +164,7 @@ jobs:
           ${NULL+}
       - name: Clone SDL_mixer
         working-directory: .
-        run: git clone --recurse-submodules --branch ${{ env.MIXER_BRANCH }} https://github.com/libsdl-org/SDL_mixer.git
+        run: git clone --recurse-submodules --branch main https://github.com/libsdl-org/SDL_mixer.git
       - name: Configure
         run: >
           cmake -G Ninja
@@ -169,3 +195,31 @@ jobs:
         with: 
             name: sdl-mixer-apple-macOS-${{ matrix.platform.arch }}
             path: SDL_mixer/build/*
+
+  create-release:
+    name: Create GitHub Release for SDL_mixer
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-linux, build-macos] # build-windows is commented out
+    permissions:
+      contents: write # Required to create a release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts # All artifacts will be downloaded into subdirectories under 'artifacts'
+
+      - name: List downloaded files (for debugging)
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-version.outputs.release_tag }} # Use the actual release tag
+          name: "SDL_mixer ${{ needs.determine-version.outputs.version_number }}"
+          body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including builds for Linux and Apple platforms."
+          files: |
+            artifacts/sdl-mixer-linux/*
+            artifacts/sdl-mixer-apple-macOS-arm64/*
+            artifacts/sdl-mixer-apple-macOS-x86_64/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

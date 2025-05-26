@@ -7,9 +7,38 @@ on:
 
 
 jobs:
+  determine-version:
+    name: Determine Latest SDL3 Version
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.get_version.outputs.release_tag }}
+      version_number: ${{ steps.get_version.outputs.version_number }}
+    steps:
+      - name: Get latest SDL3 release info
+        id: get_version
+        run: |
+          RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 1 --json tagName --jq -r ".[0].tagName")
+          echo "Determined RELEASE_TAG: ${RELEASE_TAG}"
+          # Ensure RELEASE_TAG is not empty or null
+          if [ -z "${RELEASE_TAG}" ] || [ "${RELEASE_TAG}" == "null" ]; then
+            echo "::error::Failed to determine RELEASE_TAG."
+            exit 1
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          VERSION_NUMBER=$(echo "${RELEASE_TAG}" | sed 's/^release-//')
+          echo "Determined VERSION_NUMBER: ${VERSION_NUMBER}"
+          if [ -z "${VERSION_NUMBER}" ]; then
+            echo "::error::Failed to determine VERSION_NUMBER from RELEASE_TAG: ${RELEASE_TAG}."
+            exit 1
+          fi
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-windows:
     name: Download Windows
     runs-on: ubuntu-latest
+    needs: determine-version
     strategy:
       fail-fast: false
       matrix:
@@ -17,16 +46,17 @@ jobs:
 
     steps:
       - name: Download release build
-        run: wget https://github.com/libsdl-org/SDL/releases/download/release-${{ env.SDL3_VERSION }}/SDL3-${{ env.SDL3_VERSION }}-win32-${{ matrix.arch }}.zip
+        run: wget https://github.com/libsdl-org/SDL/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with: 
             name: sdl-windows-${{ matrix.arch }}
-            path: SDL3-${{ env.SDL3_VERSION }}-win32-${{ matrix.arch }}.zip
+            path: SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
+    needs: determine-version
     container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
     defaults:
       run:
@@ -34,7 +64,7 @@ jobs:
     steps:
       - name: Clone SDL3
         working-directory: .
-        run: git clone --depth 1 --branch release-${{ env.SDL3_VERSION }} https://github.com/libsdl-org/SDL.git
+        run: git clone --depth 1 --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL.git
       - name: Configure
         run: >
           cmake -G Ninja
@@ -56,6 +86,7 @@ jobs:
   build-macos:
     name: Build for Apple
     runs-on: macos-14
+    needs: determine-version
     defaults:
       run:
         working-directory: SDL
@@ -66,7 +97,7 @@ jobs:
     steps:
       - name: Clone SDL3
         working-directory: .
-        run: git clone --depth 1 --branch release-${{ env.SDL3_VERSION }} https://github.com/libsdl-org/SDL.git
+        run: git clone --depth 1 --branch ${{ needs.determine-version.outputs.release_tag }} https://github.com/libsdl-org/SDL.git
       - name: Setup Xcode version
         uses: maxim-lobanov/setup-xcode@v1.6.0
         with:
@@ -91,3 +122,34 @@ jobs:
         with: 
             name: sdl-apple-${{ matrix.target }}
             path: SDL/build/*
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-windows, build-linux, build-macos]
+    permissions:
+      contents: write # Required to create a release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts # All artifacts will be downloaded into subdirectories under 'artifacts'
+
+      - name: List downloaded files (for debugging)
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-version.outputs.release_tag }}
+          name: "SDL Core ${{ needs.determine-version.outputs.version_number }}"
+          body: "Automated release for SDL Core version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms."
+          files: |
+            artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
+            artifacts/sdl-windows-x86/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x86.zip
+            artifacts/sdl-windows-arm64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-arm64.zip
+            artifacts/sdl-linux/*
+            artifacts/sdl-apple-iOS/*
+            artifacts/sdl-apple-/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
