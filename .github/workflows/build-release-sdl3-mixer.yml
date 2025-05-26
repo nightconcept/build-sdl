@@ -113,22 +113,21 @@ jobs:
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package Linux library
+        working-directory: SDL_mixer/build
+        run: |
+          # Assuming libSDL3_mixer.so.0 is the correct file
+          zip "../SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip" libSDL3_mixer.so.0
+      - name: Upload Linux Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-mixer-linux
-            path: SDL_mixer/build/*.so.0
+        with:
+            name: sdl-mixer-linux-zip
+            path: SDL_mixer/SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple (${{ matrix.platform.arch }})
+    name: Build for Apple (Universal)
     runs-on: macos-latest
     needs: determine-version
-    strategy:
-      fail-fast: false
-      matrix:
-          platform:
-          - {arch: 'arm64', flags: '-DSDL_CPU_ARM64=ON'}
-          - {arch: 'x86_64', flags: '-DSDL_CPU_X64=ON'}
     defaults:
       run:
         working-directory: SDL_mixer
@@ -141,10 +140,9 @@ jobs:
         with:
           cmake-generator: Ninja
           cmake-arguments: |
-            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DSDL_DISABLE_INSTALL_DOCS=ON \
-            -DSDL_INSTALL_TESTS=OFF \
-            ${{ matrix.platform.flags }}
+            -DSDL_INSTALL_TESTS=OFF
           version: 3-head
           shell: sh
       - name: Setup MacOS dependencies
@@ -168,7 +166,7 @@ jobs:
       - name: Configure
         run: >
           cmake -G Ninja
-          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform.arch }}"
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DSDLMIXER_FLAC=ON \
@@ -186,15 +184,19 @@ jobs:
           -DSDLMIXER_SAMPLES=OFF
           -DSDLMIXER_INSTALL=OFF
           -DSDLMIXER_VENDORED=ON
-          ${{ matrix.platform.flags }}
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package macOS library
+        working-directory: SDL_mixer/build/Release
+        run: |
+          # Assuming libSDL3_mixer.0.dylib is the correct file
+          zip "../../SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_mixer.0.dylib
+      - name: Upload macOS Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-mixer-apple-macOS-${{ matrix.platform.arch }}
-            path: SDL_mixer/build/*
+        with:
+            name: sdl-mixer-apple-zip
+            path: SDL_mixer/SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release for SDL_mixer
@@ -218,8 +220,7 @@ jobs:
           name: "SDL_mixer ${{ needs.determine-version.outputs.version_number }}"
           body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including builds for Linux and Apple platforms."
           files: |
-            artifacts/sdl-mixer-linux/*
-            artifacts/sdl-mixer-apple-macOS-arm64/*
-            artifacts/sdl-mixer-apple-macOS-x86_64/*
+            artifacts/sdl-mixer-linux-zip/*.zip
+            artifacts/sdl-mixer-apple-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

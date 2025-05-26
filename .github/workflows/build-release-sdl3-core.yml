@@ -46,12 +46,12 @@ jobs:
 
     steps:
       - name: Download release build
-        run: wget https://github.com/libsdl-org/SDL/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+        run: wget https://github.com/libsdl-org/SDL/releases/download/${{ needs.determine-version.outputs.release_tag }}/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with: 
-            name: sdl-windows-${{ matrix.arch }}
-            path: SDL3-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+            name: sdl-windows-x64
+            path: SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
 
   build-linux:
     name: Build Linux
@@ -77,11 +77,16 @@ jobs:
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package Linux library
+        working-directory: SDL/build
+        run: |
+          # Assuming libSDL3.so.0 is the correct file, based on previous logs
+          zip "../SDL3-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip" libSDL3.so.0
+      - name: Upload Linux Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-linux
-            path: SDL/build/*.so.0
+        with:
+            name: sdl-linux-zip
+            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
     name: Build for Apple
@@ -90,10 +95,6 @@ jobs:
     defaults:
       run:
         working-directory: SDL
-    strategy:
-      fail-fast: false
-      matrix:
-          target: ['']
     steps:
       - name: Clone SDL3
         working-directory: .
@@ -106,7 +107,8 @@ jobs:
         run: >
           cmake -G "Xcode"
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
-          -DCMAKE_SYSTEM_NAME=${{ matrix.target }}
+          # CMAKE_SYSTEM_NAME is not strictly needed here as it defaults to the host OS.
+          # For cross-compilation to iOS/tvOS etc. it would be e.g. -DCMAKE_SYSTEM_NAME=iOS
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_BUILD_TYPE=Release
           -DSDL_SHARED=ON
@@ -117,11 +119,16 @@ jobs:
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package macOS library
+        working-directory: SDL/build/Release
+        run: |
+          # Zipping libSDL3.0.dylib, which is typically the actual library file
+          zip "../../SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3.0.dylib
+      - name: Upload macOS Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-apple-${{ matrix.target }}
-            path: SDL/build/Release/*.dylib
+        with:
+            name: sdl-apple-zip
+            path: SDL/SDL3-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release
@@ -146,9 +153,7 @@ jobs:
           body: "Automated release for SDL Core version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms."
           files: |
             artifacts/sdl-windows-x64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
-            artifacts/sdl-windows-x86/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-x86.zip
-            artifacts/sdl-windows-arm64/SDL3-${{ needs.determine-version.outputs.version_number }}-win32-arm64.zip
-            artifacts/sdl-linux/*.so.0
-            artifacts/sdl-apple-/*.dylib
+            artifacts/sdl-linux-zip/*.zip
+            artifacts/sdl-apple-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

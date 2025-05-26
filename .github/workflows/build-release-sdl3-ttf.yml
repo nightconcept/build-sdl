@@ -101,20 +101,22 @@ jobs:
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package Linux library
+        working-directory: SDL_ttf/build
+        run: |
+          # Assuming libSDL3_ttf.so.0 is the correct file
+          zip "../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip" libSDL3_ttf.so.0
+      - name: Upload Linux Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-ttf-linux
-            path: SDL_ttf/build/*.so.0
+        with:
+            name: sdl-ttf-linux-zip
+            path: SDL_ttf/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple
+    name: Build for Apple (Universal)
     runs-on: macos-latest
     needs: determine-version
     strategy:
-      fail-fast: false
-      matrix:
-          arch: [arm64, x86_64]
     defaults:
       run:
         working-directory: SDL_ttf
@@ -127,7 +129,7 @@ jobs:
         with:
           cmake-generator: Ninja
           cmake-arguments: |
-            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DSDL_DISABLE_INSTALL_DOCS=ON \
             -DSDL_INSTALL_TESTS=OFF
           version: 3-head
@@ -146,7 +148,7 @@ jobs:
         run: >
           cmake -G Ninja
           -DBUILD_SHARED_LIBS=ON
-          -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON
           -DSDLTTF_HARFBUZZ=ON
           -DSDLTTF_WERROR=ON
@@ -161,11 +163,16 @@ jobs:
           -S . -B build
       - name: Build
         run: cmake --build build --config Release
-      - name: Upload Build
+      - name: Package macOS library
+        working-directory: SDL_ttf/build/Release
+        run: |
+          # Assuming libSDL3_ttf.0.dylib is the correct file
+          zip "../../SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_ttf.0.dylib
+      - name: Upload macOS Build
         uses: actions/upload-artifact@v4
-        with: 
-            name: sdl-ttf-apple-macOS-${{ matrix.arch }}
-            path: SDL_ttf/build/*
+        with:
+            name: sdl-ttf-apple-zip
+            path: SDL_ttf/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release for SDL_ttf
@@ -190,8 +197,7 @@ jobs:
           body: "Automated release for SDL_ttf version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms."
           files: |
             artifacts/sdl-ttf-windows-x64/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
-            artifacts/sdl-ttf-linux/*
-            artifacts/sdl-ttf-apple-macOS-arm64/*
-            artifacts/sdl-ttf-apple-macOS-x86_64/*
+            artifacts/sdl-ttf-linux-zip/*.zip
+            artifacts/sdl-ttf-apple-zip/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
