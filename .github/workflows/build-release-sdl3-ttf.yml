@@ -212,10 +212,6 @@ jobs:
           name: "SDL_ttf ${{ needs.determine-version.outputs.version_number }}"
           body: |
             Automated release for SDL_ttf version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms.
-
-            **Original SDL_ttf release notes:**
-
-            ${{ needs.determine-version.outputs.original_release_notes }}
           files: |
             artifacts/sdl-ttf-windows-x64/SDL3_ttf-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-ttf-linux-zip/*.zip
