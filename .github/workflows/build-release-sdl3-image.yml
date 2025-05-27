@@ -123,7 +123,7 @@ jobs:
             path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
-    name: Build for Apple (Universal)
+    name: Build for Apple
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -183,13 +183,13 @@ jobs:
       - name: Package macOS library
         working-directory: SDL_image/build
         run: |
-          # Assuming libSDL3_image.0.dylib is the correct file and is now universal
-          zip "../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_image.0.dylib
+          # Assuming libSDL3_image.0.dylib is the correct file for the current architecture (${{ matrix.platform.arch }})
+          zip "../SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip" libSDL3_image.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl-image-apple-macOS-universal-zip
-            path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
+            name: sdl-image-apple-macOS-${{ matrix.platform.arch }}-zip
+            path: SDL_image/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-${{ matrix.platform.arch }}.zip
 
   create-release:
     name: Create GitHub Release for SDL_image
@@ -215,6 +215,7 @@ jobs:
           files: |
             artifacts/sdl-image-windows-x64/SDL3_image-${{ needs.determine-version.outputs.version_number }}-win32-x64.zip
             artifacts/sdl-image-linux-zip/*.zip
-            artifacts/sdl-image-apple-macOS-universal-zip/*.zip
+            artifacts/sdl-image-apple-macOS-arm64-zip/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-arm64.zip
+            artifacts/sdl-image-apple-macOS-x86_64-zip/SDL3_image-${{ needs.determine-version.outputs.version_number }}-macos-x86_64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
