@@ -39,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
- build-windows:
+  build-windows:
    name: Download Windows SDL2_mixer
    runs-on: ubuntu-latest
    needs: determine-version
