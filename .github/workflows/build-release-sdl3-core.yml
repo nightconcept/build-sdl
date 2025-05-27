@@ -3,7 +3,7 @@ name: Build SDL Core
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Run daily at 5 AM UTC
+    - cron: '0 0 * * *'
 
 
 jobs:
