@@ -10,19 +10,21 @@ jobs:
     outputs:
       release_tag: ${{ steps.get_version.outputs.release_tag }}
       version_number: ${{ steps.get_version.outputs.version_number }}
+      mixer_original_tag: ${{ steps.get_version.outputs.mixer_original_tag }}
     steps:
       - name: Get latest SDL_mixer release info
         id: get_version
         run: |
           ORIGINAL_RELEASE_TAG=$(gh release list --repo libsdl-org/SDL_mixer --limit 1 --json tagName | jq -r ".[0].tagName")
           echo "Determined ORIGINAL_RELEASE_TAG: ${ORIGINAL_RELEASE_TAG}"
+          echo "mixer_original_tag=${ORIGINAL_RELEASE_TAG}" >> $GITHUB_OUTPUT
           if [ -z "${ORIGINAL_RELEASE_TAG}" ] || [ "${ORIGINAL_RELEASE_TAG}" == "null" ]; then
             echo "::error::Failed to determine ORIGINAL_RELEASE_TAG."
             exit 1
           fi
 
-          # Construct the new release tag for sdl3_mixer
-          NEW_RELEASE_TAG="sdl3_mixer-${ORIGINAL_RELEASE_TAG}"
+          # Construct the new release tag for sdl2_mixer
+          NEW_RELEASE_TAG="sdl2_mixer-${ORIGINAL_RELEASE_TAG}"
           echo "Constructed NEW_RELEASE_TAG: ${NEW_RELEASE_TAG}"
           echo "release_tag=${NEW_RELEASE_TAG}" >> $GITHUB_OUTPUT
 
@@ -37,22 +39,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-# Windows only has binaries to download for the SDL2 version it seems
-#  build-windows:
-#    name: Download Windows
-#    runs-on: ubuntu-latest
-#    strategy:
-#      fail-fast: false
-#      matrix:
-#          arch: [x64, x86]
-#    steps:
-#      - name: Download release build
-#        run: wget https://github.com/libsdl-org/SDL_mixer/releases/download/release-${{ env.MIXER_VERSION }}/SDL2_mixer-${{ env.MIXER_VERSION }}-win32-${{ matrix.arch }}.zip
-#      - name: Upload Build
-#        uses: actions/upload-artifact@v4
-#        with: 
-#            name: sdl-mixer-windows-${{ matrix.arch }}
-#            path: SDL2_mixer-${{ env.MIXER_VERSION }}-win32-${{ matrix.arch }}.zip
+ build-windows:
+   name: Download Windows SDL2_mixer
+   runs-on: ubuntu-latest
+   needs: determine-version
+   strategy:
+     fail-fast: false
+     matrix:
+       arch: [x64]
+   steps:
+     - name: Download release build
+       run: wget https://github.com/libsdl-org/SDL_mixer/releases/download/${{ needs.determine-version.outputs.mixer_original_tag }}/SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+     - name: Upload Build Artifact
+       uses: actions/upload-artifact@v4
+       with:
+         name: sdl2_mixer-windows-${{ matrix.arch }} # Artifact name reflects content
+         path: SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
@@ -70,7 +72,7 @@ jobs:
         id: sdl
         with:
           cmake-generator: Ninja
-          version: 3-head
+          version: 2-head
           shell: sh
       - name: Set up Linux dependencies
         working-directory: .
@@ -122,13 +124,13 @@ jobs:
       - name: Package Linux library
         working-directory: SDL_mixer/build
         run: |
-          # Assuming libSDL3_mixer.so.0 is the correct file
-          zip "../SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip" libSDL3_mixer.so.0
+          # Assuming libSDL2_mixer.so.0 is the correct file
+          zip "../SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip" libSDL2_mixer.so.0
       - name: Upload Linux Build
         uses: actions/upload-artifact@v4
         with:
             name: sdl-mixer-linux-zip
-            path: SDL_mixer/SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
+            path: SDL_mixer/SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-linux-x86_64.zip
 
   build-macos:
     name: Build for Apple (Universal)
@@ -149,7 +151,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DSDL_DISABLE_INSTALL_DOCS=ON \
             -DSDL_INSTALL_TESTS=OFF
-          version: 3-head
+          version: 2-head
           shell: sh
       - name: Setup MacOS dependencies
         working-directory: .
@@ -196,18 +198,18 @@ jobs:
       - name: Package macOS library
         working-directory: SDL_mixer/build
         run: |
-          # Assuming libSDL3_mixer.0.dylib is the correct file and is now universal
-          zip "../SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL3_mixer.0.dylib
+          # Assuming libSDL2_mixer.0.dylib is the correct file and is now universal
+          zip "../SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip" libSDL2_mixer.0.dylib
       - name: Upload macOS Build
         uses: actions/upload-artifact@v4
         with:
             name: sdl-mixer-apple-macOS-universal-zip
-            path: SDL_mixer/SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
+            path: SDL_mixer/SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-macos-universal.zip
 
   create-release:
     name: Create GitHub Release for SDL_mixer
     runs-on: ubuntu-latest
-    needs: [determine-version, build-linux, build-macos] # build-windows is commented out
+    needs: [determine-version, build-windows, build-linux, build-macos]
     permissions:
       contents: write # Required to create a release
     steps:
@@ -224,8 +226,9 @@ jobs:
         with:
           tag_name: ${{ needs.determine-version.outputs.release_tag }} # Use the actual release tag
           name: "SDL_mixer ${{ needs.determine-version.outputs.version_number }}"
-          body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including builds for Linux and Apple platforms."
+          body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including builds for Windows, Linux, and Apple platforms." # Added Windows
           files: |
+            artifacts/sdl2_mixer-windows-x64/*.zip # Added Windows artifact
             artifacts/sdl-mixer-linux-zip/*.zip
             artifacts/sdl-mixer-apple-macOS-universal-zip/*.zip
         env:
