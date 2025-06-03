@@ -18,7 +18,7 @@ jobs:
       - name: Get latest SDL3 release info
         id: get_version
         run: |
-          ORIGINAL_RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 1 --json tagName | jq -r ".[0].tagName")
+          ORIGINAL_RELEASE_TAG=$(gh release list --repo libsdl-org/SDL --limit 2 --json tagName | jq -r '[.[] | select(.tagName | startswith("release-3"))][0].tagName')
           echo "Determined ORIGINAL_RELEASE_TAG: ${ORIGINAL_RELEASE_TAG}"
           # Ensure ORIGINAL_RELEASE_TAG is not empty or null
           if [ -z "${ORIGINAL_RELEASE_TAG}" ] || [ "${ORIGINAL_RELEASE_TAG}" == "null" ]; then
