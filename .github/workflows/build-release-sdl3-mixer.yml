@@ -67,12 +67,12 @@ jobs:
           arch: [x64]
     steps:
       - name: Download release build
-        run: wget https://github.com/libsdl-org/SDL_mixer/releases/download/${{ needs.determine-version.outputs.original_release_tag }}/SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+        run: wget https://github.com/libsdl-org/SDL_mixer/releases/download/${{ needs.determine-version.outputs.original_release_tag }}/SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with:
-            name: sdl2_mixer-windows-${{ matrix.arch }}
-            path: SDL2_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
+            name: sdl3_mixer-windows-${{ matrix.arch }}
+            path: SDL3_mixer-${{ needs.determine-version.outputs.version_number }}-win32-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
@@ -113,7 +113,7 @@ jobs:
           ${NULL+}
       - name: Clone SDL_mixer
         working-directory: .
-        run: git clone --recurse-submodules --branch main https://github.com/libsdl-org/SDL_mixer.git
+        run: git clone --recurse-submodules --branch ${{ needs.determine-version.outputs.original_release_tag }} https://github.com/libsdl-org/SDL_mixer.git
       - name: Check that versioning is consistent
         # We only need to run this once: arbitrarily use the Linux build
         run: ./build-scripts/test-versioning.sh
@@ -190,7 +190,7 @@ jobs:
           ${NULL+}
       - name: Clone SDL_mixer
         working-directory: .
-        run: git clone --recurse-submodules --branch main https://github.com/libsdl-org/SDL_mixer.git
+        run: git clone --recurse-submodules --branch ${{ needs.determine-version.outputs.original_release_tag }} https://github.com/libsdl-org/SDL_mixer.git
       - name: Configure
         run: >
           cmake -G Ninja
@@ -247,9 +247,9 @@ jobs:
         with:
           tag_name: ${{ needs.determine-version.outputs.release_tag }} # Use the actual release tag
           name: "SDL_mixer ${{ needs.determine-version.outputs.version_number }}"
-          body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including SDL3_mixer (main branch is listed as SDL3) builds for Linux and macOS, and downloaded SDL2_mixer binaries for Windows."
+          body: "Automated release for SDL_mixer version ${{ needs.determine-version.outputs.version_number }}, including SDL3_mixer builds for Windows, Linux, and macOS."
           files: |
-            artifacts/sdl2_mixer-windows-x64/*.zip
+            artifacts/sdl3_mixer-windows-x64/*.zip
             artifacts/sdl-mixer-linux-zip/*.zip
             artifacts/sdl-mixer-apple-macOS-universal-zip/*.zip
         env:
